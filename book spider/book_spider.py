@@ -2,7 +2,7 @@ import asyncio
 import random
 import re
 from itertools import chain
-from typing import Dict, Generator, List
+from typing import Any, Coroutine, Dict, Generator, List
 from urllib.parse import urljoin
 
 import pandas as pd
@@ -21,7 +21,7 @@ async def make_request(
     client: AsyncClient, url: str, delay: bool = False, seconds: int = SLEEP_TIME
 ) -> Response:
     """Send a request to the specified url using the provided client, with an optional
-    random delay before sending the request. The is a random float from 1 and seconds.
+    delay before sending the request. The delay is a random float from 1 and seconds.
 
     Args:
         client (httpx.AsyncClient): client to send the request
@@ -32,12 +32,13 @@ async def make_request(
     Returns:
         Response: response of the request
     """
+    headers = {"user-agent": fua.random}
+    request = client.get(url, headers=headers)
 
     if delay:
-        await asyncio.sleep(random.uniform(1, seconds))
+        return await sleep_and_execute(request, seconds)
 
-    headers = {"user-agent": fua.random}
-    return await client.get(url, headers=headers)
+    return await request
 
 
 def scrape_book_details(html: str) -> Dict:
@@ -119,6 +120,24 @@ async def get_books(client: AsyncClient, url: str) -> List[Dict]:
     return results
 
 
+async def sleep_and_execute(task: Coroutine, seconds: int = SLEEP_TIME) -> Any:
+    """Sleeps before executing the given task. The actual sleep time is a float
+    between 1 and seconds.
+
+    Args:
+        task (Coroutine): task to be executed
+        seconds (int, optional): seconds to sleep for. Defaults to SLEEP_TIME.
+
+    Returns:
+        Any: result of the task
+    """
+    if seconds <= 1:
+        raise ValueError("seconds must be greater than 1.")
+
+    await asyncio.sleep(random.uniform(1, seconds))
+    return await task
+
+
 async def execute_with_interval(tasks: Generator, seconds: int = SLEEP_TIME) -> List:
     """Executes a single task with a delay between tasks. The delay is a random float
     between 1 and seconds. Returns a list of results.
@@ -133,8 +152,7 @@ async def execute_with_interval(tasks: Generator, seconds: int = SLEEP_TIME) -> 
     results = []
 
     for task in tasks:
-        await asyncio.sleep(random.uniform(1, seconds))
-        result = await task
+        result = await sleep_and_execute(task, seconds)
         results.append(result)
 
     return results
@@ -154,7 +172,6 @@ async def execute_batch_with_interval(
     Returns:
         List: list of results
     """
-
     results = []
     task_iter = iter(tasks)
 
@@ -163,12 +180,13 @@ async def execute_batch_with_interval(
             batch = []
             for _ in range(batch_size):
                 batch.append(next(task_iter))
-            await asyncio.sleep(random.uniform(1, seconds))
-            results += await asyncio.gather(*batch)
+
+            task = asyncio.gather(*batch)
+            results += await sleep_and_execute(task, seconds)
         except StopIteration:
             if batch:
-                await asyncio.sleep(random.uniform(1, seconds))
-                results += await asyncio.gather(*batch)
+                task = asyncio.gather(*batch)
+                results += await sleep_and_execute(task, seconds)
             break
 
     return results
